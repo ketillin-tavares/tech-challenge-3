@@ -1,0 +1,125 @@
+# =============================================================================
+# Provisionamento da infraestrutura (Terraform principal em infra/main).
+#
+# CLI-driven no HCP Terraform (app.terraform.io): o runner roda os comandos,
+# mas a EXECUCAO e o STATE ficam no workspace remoto do TFC. Por isso o job
+# NAO precisa de credencial AWS nem de id-token (as chaves AWS ficam como env
+# vars *sensitive* no workspace do TFC).
+#
+# Disparo manual (workflow_dispatch): rode primeiro com acao=plan, revise a
+# saida (aparece no runner e no TFC) e entao rode com acao=apply.
+# acao=destroy DERRUBA TODA a infraestrutura (EC2, RDS, Cognito, ECR...) e por
+# isso exige digitar "destroy" no campo de confirmacao alem de escolher a acao.
+# Actions pinadas por SHA (supply chain).
+#
+# Pre-requisitos (ver infra/README.md):
+#   - GitHub Environment `infra` com branch policy restrita a main e o secret
+#     TF_API_TOKEN (team token do HCP Terraform) dentro do environment.
+#   - GitHub variable TF_CLOUD_ORGANIZATION (org do HCP Terraform).
+#   - Workspace do TFC com env vars AWS configuradas.
+# =============================================================================
+name: infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      acao:
+        description: "plan = so mostra as mudancas; apply = aplica; destroy = derruba tudo"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+        default: plan
+      confirmacao:
+        description: "Para acao=destroy, digite 'destroy' aqui (protecao contra clique errado)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Nunca dois terraform em paralelo (alem do lock de run do proprio TFC).
+concurrency:
+  group: infra
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  # Organizacao/workspace do HCP Terraform via env (Terraform >= 1.6); o bloco
+  # `cloud {}` do main.tf fica vazio de proposito.
+  TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
+  TF_WORKSPACE: tech-challenge-3
+
+defaults:
+  run:
+    working-directory: infra/main
+
+jobs:
+  terraform:
+    name: terraform ${{ inputs.acao }}
+    runs-on: ubuntu-latest
+    # Environment `infra`: branch policy restrita a main + TF_API_TOKEN como
+    # environment secret (o token nao fica exposto a runs de outras branches).
+    environment: infra
+    # Segunda camada do mesmo controle (vale mesmo sem branch policy).
+    if: github.ref == 'refs/heads/main'
+    steps:
+      # Falha cedo se o destroy foi escolhido sem a confirmacao digitada.
+      - name: Confirma destroy
+        if: inputs.acao == 'destroy'
+        env:
+          CONFIRMACAO: ${{ inputs.confirmacao }}
+        run: |
+          if [ "$CONFIRMACAO" != "destroy" ]; then
+            echo "::error::acao=destroy exige digitar 'destroy' no campo de confirmacao."
+            exit 1
+          fi
+        working-directory: .
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Setup Terraform (token do HCP Terraform)
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "~> 1.13"
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      # Formato canonico em TODA a pasta infra/.
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+        working-directory: infra
+
+      # Conecta ao workspace do TFC (crie-o antes na UI, ver README; se nao
+      # existir, o init cria automaticamente - cuidado com typos na org).
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      # Execucao remota nao suporta plan salvo (-out): o apply refaz o plan no
+      # TFC (codigo da main NO MOMENTO do run + state atual) e aplica em
+      # seguida. Disciplina: aplique o MESMO commit que foi planejado (nao
+      # deixe merges entrarem entre o plan e o apply); required reviewers no
+      # environment ajudam a segurar esse gatilho.
+      - name: Terraform plan
+        if: inputs.acao == 'plan'
+        run: terraform plan -input=false
+
+      - name: Terraform apply
+        if: inputs.acao == 'apply'
+        run: terraform apply -input=false -auto-approve
+
+      # Derruba TODA a infraestrutura (execucao remota no TFC, mesmo fluxo do
+      # apply). Ja passou pela confirmacao explicita no inicio do job.
+      - name: Terraform destroy
+        if: inputs.acao == 'destroy'
+        run: terraform destroy -input=false -auto-approve
+
+      # Facilita copiar os valores para GitHub variables / .env locais.
+      - name: Outputs
+        if: inputs.acao == 'apply'
+        run: terraform output

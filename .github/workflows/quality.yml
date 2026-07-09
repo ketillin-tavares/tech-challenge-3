@@ -1,0 +1,170 @@
+# =============================================================================
+# Qualidade por servico (monorepo; deteccao de mudancas via git diff puro,
+# sem actions de terceiros). Actions pinadas por SHA (supply chain).
+#
+# Em pull_request e push na main (ou manualmente via workflow_dispatch, que
+# roda os DOIS servicos), para cada servico alterado:
+#   - ruff format --check + ruff check (mesmos comandos do `make ci`)
+#   - ty check
+#   - pytest com cobertura (xml para o SonarCloud)
+#   - vendas: tambem testes de integracao/E2E (Testcontainers; runners ubuntu
+#     ja tem Docker)
+#   - SonarCloud com quality gate BLOQUEANTE (-Dsonar.qualitygate.wait=true)
+#
+# Um projeto SonarCloud POR SERVICO (suporte a monorepo): gates e cobertura
+# independentes - um servico nao mascara a divida do outro.
+# Secret necessario: SONAR_TOKEN. Variables necessarias: SONAR_ORGANIZATION,
+# SONAR_PROJECT_KEY_AUTH, SONAR_PROJECT_KEY_VENDAS (projectKey/organization
+# ficam FORA do repo; os sonar-project.properties tem so config tecnica).
+# =============================================================================
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Execucao manual: sem `before` para diffar, o fallback conservador do job
+  # `changes` roda a qualidade dos dois servicos.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Em PRs, um novo push cancela a execucao anterior (economia de runner).
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: detecta servicos alterados
+    runs-on: ubuntu-latest
+    outputs:
+      auth: ${{ steps.filter.outputs.auth }}
+      vendas: ${{ steps.filter.outputs.vendas }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0 # historico completo para o git diff
+
+      # Sem action de terceiros: git diff contra a base do PR (ou o commit
+      # anterior do push). Fallback conservador: roda tudo.
+      - name: Path filters (git diff)
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}...HEAD"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+              echo "auth=true" >> "$GITHUB_OUTPUT"
+              echo "vendas=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            RANGE="$BEFORE..HEAD"
+          fi
+          CHANGED="$(git diff --name-only $RANGE)"
+          echo "arquivos alterados:"
+          printf '%s\n' "$CHANGED"
+          for svc in auth vendas; do
+            if printf '%s\n' "$CHANGED" | grep -qE "^(services/$svc/|\.github/workflows/quality\.yml)"; then
+              echo "$svc=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$svc=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  auth:
+    name: auth (lint + types + testes + sonar)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.auth == 'true'
+    defaults:
+      run:
+        working-directory: services/auth
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0 # historico completo p/ analise de novo codigo no Sonar
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      - name: Instala dependencias
+        run: uv sync --frozen
+
+      - name: Ruff format (check)
+        run: uv run ruff format --check src/ tests/
+
+      - name: Ruff lint
+        run: uv run ruff check src/ tests/
+
+      - name: Typecheck (ty)
+        run: uv run ty check src/
+
+      - name: Testes unitarios com cobertura
+        run: uv run pytest --cov=src --cov-report=xml --cov-report=term-missing
+
+      - name: SonarCloud (quality gate)
+        uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: services/auth
+          args: >-
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY_AUTH }}
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.qualitygate.wait=true
+
+  vendas:
+    name: vendas (lint + types + testes + integracao + sonar)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.vendas == 'true'
+    defaults:
+      run:
+        working-directory: services/vendas
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0 # historico completo p/ analise de novo codigo no Sonar
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      - name: Instala dependencias
+        run: uv sync --frozen
+
+      - name: Ruff format (check)
+        run: uv run ruff format --check src/ tests/
+
+      - name: Ruff lint
+        run: uv run ruff check src/ tests/
+
+      - name: Typecheck (ty)
+        run: uv run ty check src/
+
+      - name: Testes unitarios com cobertura
+        run: uv run pytest --cov=src --cov-report=xml --cov-report=term-missing
+
+      # Testcontainers (Postgres efemero); runners ubuntu-latest tem Docker.
+      - name: Testes de integracao e E2E
+        run: uv run pytest -m integration --no-cov
+
+      - name: SonarCloud (quality gate)
+        uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: services/vendas
+          args: >-
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY_VENDAS }}
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.qualitygate.wait=true
