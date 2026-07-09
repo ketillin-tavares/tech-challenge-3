@@ -1,0 +1,204 @@
+# =============================================================================
+# Stack local da Plataforma de Revenda de Veiculos (SOAT Fase 3) - monorepo.
+#
+# Servicos:
+#   - postgres:   banco transacional do servico de vendas.
+#   - migrations: one-shot `alembic upgrade head` (vendas); a app espera por ele.
+#   - seed:       one-shot que popula veiculos de exemplo (vendas).
+#   - vendas:     API de veiculos/compras (porta 8001). Valida access tokens
+#                 do Cognito via JWKS (sem chamar o servico de auth).
+#   - auth:       API de registro/login (porta 8000). Fala APENAS com o Cognito
+#                 (sem banco) -- totalmente apartado, conforme o challenge.
+#
+# Seguranca/performance:
+#   - Redes segmentadas: `backend` (internal) para vendas<->postgres; `frontend`
+#     (bridge) para expor as APIs. O auth NAO participa da rede do banco.
+#   - Hardening: no-new-privileges em todos; apps com cap_drop ALL, rootfs
+#     read-only (+ tmpfs em /tmp) e usuario non-root (definido nos Dockerfiles).
+#   - Limites de CPU/memoria por servico (ajuste conforme o ambiente alvo).
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-revenda}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-revenda}
+      POSTGRES_DB: ${DATABASE_NAME:-revenda}
+    # Exposto no host em 5431 (->5432 do container) para acesso local a partir
+    # do PC (ex.: DBeaver/psql). Publicar porta exige estar tambem numa rede
+    # nao-`internal`: a `backend` e `internal: true` (sem NAT para o host), logo
+    # o Postgres tambem entra na `frontend` (bridge) para o mapeamento funcionar.
+    ports:
+      - "5431:5432" # remover depoois
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-revenda} -d ${DATABASE_NAME:-revenda}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+      - frontend # remover depois
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  # Roda as migrations (alembic upgrade head) e encerra; a app de vendas so
+  # sobe apos concluir com sucesso (depends_on service_completed_successfully).
+  migrations:
+    build:
+      context: ./services/vendas
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - services/vendas/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    # Container efemero (one-shot): nao reinicia e nao tem healthcheck de servico.
+    restart: "no"
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Popula a massa de dados de veiculos para testes locais (idempotente).
+  seed:
+    build:
+      context: ./services/vendas
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["python", "-m", "src.seed_veiculos"]
+    env_file:
+      - services/vendas/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    restart: "no"
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  vendas:
+    build:
+      context: ./services/vendas
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - services/vendas/.env
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    # Healthcheck definido no Dockerfile (HEALTHCHECK nativo via Python).
+    networks:
+      - frontend  # expoe a API ao host
+      - backend   # alcanca o postgres
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - services/auth/.env
+    ports:
+      - "8000:8000"
+    # Healthcheck definido no Dockerfile (HEALTHCHECK nativo via Python).
+    networks:
+      - frontend  # somente a rede publica: auth nao acessa o banco
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # floci: emulador AWS local (drop-in do LocalStack) - alvo do Terraform de
+  # teste em infra/local (endpoints http://localhost:4566). FERRAMENTA DE DEV:
+  # nao participa da stack da aplicacao (fora das redes frontend/backend, sem
+  # depends_on) e JAMAIS vai para producao.
+  #
+  # Sem o hardening dos demais servicos (cap_drop/read_only) e com user root:
+  # exigencia da doc oficial para acessar o docker.sock do host e emular
+  # servicos container-backed (EC2/RDS/ECS/Lambda com Docker/Postgres reais).
+  # `./data` persiste o estado do modo hybrid (flush assincrono a cada 5s);
+  # a pasta esta no .gitignore.
+  # ---------------------------------------------------------------------------
+  floci:
+    image: floci/floci:latest
+    user: root
+    ports:
+      - "4566:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
+    environment:
+      FLOCI_STORAGE_MODE: hybrid
+
+volumes:
+  postgres_data:
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true

@@ -1,0 +1,85 @@
+[project]
+name = "auth"
+version = "0.1.0"
+description = "Servico de auth (registro/autenticacao de clientes via Cognito) - SOAT Fase 3"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.43.30",
+    "fastapi>=0.137.1",
+    "loguru>=0.7.3",
+    "pydantic[email]>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "uvicorn[standard]>=0.49.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.17",
+    "ty>=0.0.49",
+]
+
+# ------------------------------------------------------------------------------
+# Ruff: formatador + linter (Astral).
+# ------------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort (ordenacao de imports)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # regras especificas do Ruff
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011", "S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ------------------------------------------------------------------------------
+# ty: type checker (Astral). A raiz do servico entra no path para resolver o
+# pacote `src` (imports absolutos `from src....`).
+# ------------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.13"
+extra-paths = ["."]
+
+# ------------------------------------------------------------------------------
+# pytest: raiz do servico no pythonpath (imports `from src....`); asyncio auto.
+# ------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=src --cov-report=term-missing"
+markers = [
+    "unit: testes unitarios puros (sem I/O)",
+]
+
+# ------------------------------------------------------------------------------
+# Cobertura de testes.
+# ------------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
