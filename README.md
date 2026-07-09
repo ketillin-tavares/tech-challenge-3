@@ -58,6 +58,14 @@ Os READMEs de cada serviço detalham endpoints, arquitetura interna, variáveis
 de ambiente, como rodar localmente e como testar — consulte-os diretamente;
 este documento não repete esse conteúdo.
 
+### Diagrama C4
+
+A arquitetura está modelada em C4 (visões de contexto e de containers) no
+arquivo **[docs/c4-model.dsl](docs/c4-model.dsl)**, em Structurizr DSL. Para
+renderizar o diagrama, cole o conteúdo do arquivo em
+[structurizr.com/dsl](https://structurizr.com/dsl), ou use o
+`structurizr-cli`/Structurizr Lite apontando para `docs/c4-model.dsl`.
+
 ## Stack
 
 - **Linguagem e dependências:** Python 3.13+, gerenciado exclusivamente com [uv](https://docs.astral.sh/uv/)
