@@ -1,0 +1,84 @@
+# =============================================================================
+# Stack de PRODUCAO (EC2 unica) - entregue a instancia pelo deploy.yml via S3.
+#
+# Diferencas em relacao ao docker-compose.yml local:
+#   - Sem postgres/seed: o banco e o RDS (privado) e seed e coisa de dev.
+#   - Imagens prontas do ECR (nada de build na EC2): ${ECR_REGISTRY}/tc3-*.
+#   - Envs vem de /opt/tc3/.env, GERADO pelo deploy.sh a partir do SSM
+#     Parameter Store em cada deploy (nenhum segredo persiste no repo).
+#
+# Mesmo hardening do compose local: non-root (Dockerfile), no-new-privileges,
+# cap_drop ALL, rootfs read-only (+ tmpfs /tmp) e limites de recursos
+# dimensionados para uma t3.micro (1 GiB de RAM).
+#
+# IMDS/anti-SSRF: a instancia usa IMDSv2 com hop limit 1, entao containers em
+# bridge (vendas/migrations) NAO alcancam 169.254.169.254. Somente o auth
+# precisa das credenciais do instance profile (boto3 -> Cognito) e por isso
+# roda com network_mode: host (1 hop): uma SSRF no vendas nao rouba
+# credenciais da instancia.
+# =============================================================================
+
+services:
+  # One-shot: aplica as migrations no RDS antes de subir o vendas.
+  migrations:
+    image: ${ECR_REGISTRY}/tc3-vendas:${IMAGE_TAG}
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    restart: "no"
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  vendas:
+    image: ${ECR_REGISTRY}/tc3-vendas:${IMAGE_TAG}
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Healthcheck definido no Dockerfile (HEALTHCHECK nativo via Python).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 384M
+
+  auth:
+    image: ${ECR_REGISTRY}/tc3-auth:${IMAGE_TAG}
+    env_file:
+      - .env
+    # host network: unico servico que usa o IMDS (ver cabecalho). O uvicorn ja
+    # escuta em 0.0.0.0:8000 direto no host (`ports:` nao se aplica em host
+    # mode); quem controla o acesso externo continua sendo o Security Group.
+    network_mode: host
+    restart: unless-stopped
+    # Healthcheck definido no Dockerfile (HEALTHCHECK nativo via Python).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
