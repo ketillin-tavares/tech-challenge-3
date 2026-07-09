@@ -379,6 +379,20 @@ curl http://${APP_IP}:8001/v1/veiculos?status=VENDIDO \
   -H "Authorization: Bearer ${TOKEN}"
 ```
 
+### Promover um usuario a admin
+
+As rotas de gestao de veiculos (`POST/PUT /v1/veiculos`) exigem o grupo
+`admin` no token. O Terraform cria o grupo no Cognito, mas **nao ha
+provisionamento automatico de membros**: tornar um usuario admin e um passo
+manual no console AWS.
+
+1. Registre o usuario normalmente (`POST /v1/auth/register`).
+2. AWS console > Cognito > User pools > pool `tc3-users` > Users > clique no
+   usuario > Group memberships > **Add user to group** > selecione `admin`.
+3. Faca **login novamente** (`POST /v1/auth/login`): o grupo so entra na claim
+   `cognito:groups` de tokens emitidos apos a associacao — tokens antigos
+   continuam sem o grupo ate expirar.
+
 ### Logs do deploy e da instancia
 
 - **Deploy**: no GitHub, Actions > deploy > job > step "Acompanha o resultado
@@ -407,11 +421,22 @@ Apos o primeiro push na `main` (que dispara quality.yml):
 
 Recomendado para garantir que toda mudanca passa por CI/CD:
 - Settings > Branches > + Add rule > Branch name pattern: `main`.
-- Require status checks to pass before merging > procure os checks:
-  - `quality / auth` (se houver mudanca em services/auth)
-  - `quality / vendas` (se houver mudanca em services/vendas)
-  - Selecione ambos.
+- Require status checks to pass before merging > selecione SOMENTE os checks
+  dos JOBS do quality.yml:
+  - `quality / auth (lint + types + testes + sonar)`
+  - `quality / vendas (lint + types + testes + integracao + sonar)`
 - Salve. Agora nenhum PR mergeia sem passar em quality.
+
+Como funciona com o path filter: num PR que nao toca um servico, o job dele e
+PULADO (`if:` do job) - e job pulado CONTA como aprovado na branch protection.
+Ou seja, um PR so de README mergeia sem esperar nada, e um PR que toca um
+servico so mergeia se o job (incluindo o gate do Sonar, que falha o job via
+`-Dsonar.qualitygate.wait=true`) passar.
+
+**NAO marque como required os checks `[...] SonarCloud Code Analysis`** (vem
+do GitHub App do SonarCloud, nao do workflow): eles so reportam quando uma
+analise roda no PR - num PR sem mudanca de servico ficam "Expected / waiting"
+PARA SEMPRE e travam o merge. O gate do Sonar ja e imposto dentro do job.
 
 ---
 
