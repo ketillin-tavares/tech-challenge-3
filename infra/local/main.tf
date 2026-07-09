@@ -3,7 +3,7 @@
 # local (https://floci.io) em http://localhost:4566 - testa o provisionamento
 # completo sem gastar AWS real.
 #
-# Uso (ver infra/README.md, secao "Teste local (floci)"):
+# Uso (ver infra/local/README.md):
 #   docker compose up -d floci   (na raiz do repo)
 #   cd infra/local && terraform init && terraform apply
 #
