@@ -25,12 +25,6 @@ services:
       POSTGRES_USER: ${DATABASE_USER:-revenda}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-revenda}
       POSTGRES_DB: ${DATABASE_NAME:-revenda}
-    # Exposto no host em 5431 (->5432 do container) para acesso local a partir
-    # do PC (ex.: DBeaver/psql). Publicar porta exige estar tambem numa rede
-    # nao-`internal`: a `backend` e `internal: true` (sem NAT para o host), logo
-    # o Postgres tambem entra na `frontend` (bridge) para o mapeamento funcionar.
-    ports:
-      - "5431:5432" # remover depoois
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +34,6 @@ services:
       retries: 5
     networks:
       - backend
-      - frontend # remover depois
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -172,9 +165,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # floci: emulador AWS local (drop-in do LocalStack) - alvo do Terraform de
-  # teste em infra/local (endpoints http://localhost:4566). FERRAMENTA DE DEV:
-  # nao participa da stack da aplicacao (fora das redes frontend/backend, sem
-  # depends_on) e JAMAIS vai para producao.
+  # teste em infra/local e do teste E2E local dos servicos. FERRAMENTA DE DEV:
+  # sem depends_on com a stack e JAMAIS vai para producao.
+  #
+  # Alcance por quem o consome:
+  #   - do HOST (terraform em infra/local, aws cli): http://localhost:4566
+  #   - de DENTRO dos containers (auth via boto3, vendas via JWKS):
+  #     http://floci:4566 - por isso ele entra na rede `frontend` (dentro de um
+  #     container, localhost e o proprio container).
   #
   # Sem o hardening dos demais servicos (cap_drop/read_only) e com user root:
   # exigencia da doc oficial para acessar o docker.sock do host e emular
@@ -192,6 +190,8 @@ services:
       - ./data:/app/data
     environment:
       FLOCI_STORAGE_MODE: hybrid
+    networks:
+      - frontend
 
 volumes:
   postgres_data:
