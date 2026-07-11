@@ -42,8 +42,10 @@ async def test_listar_vendidos_repassa_paginacao_e_retorna_dtos() -> None:
         veiculo_id=veiculo.id,
         cliente_id="sub-abc",
         preco_venda=Preco(valor=Decimal("85000.00")),
+        status="PAGA",
         data_venda=agora,
         created_at=agora,
+        updated_at=agora,
     )
     dto = VeiculoVendidoDTO.de_entidades(veiculo, venda)
     consultas = FakeVeiculoQueryService(vendidos=[dto])

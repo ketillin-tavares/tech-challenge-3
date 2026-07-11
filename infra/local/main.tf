@@ -60,6 +60,7 @@ provider "aws" {
     # um DNS publico wildcard -> 127.0.0.1 (mesma porta do emulador).
     s3control = "http://localhost.localstack.cloud:4566"
     iam       = "http://localhost:4566"
+    logs      = "http://localhost:4566"
     sts       = "http://localhost:4566"
   }
 }

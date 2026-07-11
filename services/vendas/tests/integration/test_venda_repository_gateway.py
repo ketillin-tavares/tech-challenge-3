@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.entities import Veiculo, Venda
 from src.domain.exceptions import VeiculoIndisponivelError
-from src.domain.value_objects import Ano, Preco, StatusVeiculo
+from src.domain.value_objects import Ano, Preco, StatusVeiculo, StatusVenda
 from src.interface.gateways.veiculo_repository_gateway import VeiculoRepositoryGateway
 from src.interface.gateways.venda_repository_gateway import VendaRepositoryGateway
 
@@ -31,15 +31,17 @@ def construir_veiculo() -> Veiculo:
 
 
 def construir_venda(veiculo_id, cliente_id="cliente-1") -> Venda:
-    """Constroi uma entidade Venda valida."""
+    """Constroi uma entidade Venda efetivada (PAGA) valida."""
     agora = datetime.now(UTC)
     return Venda(
         id=uuid4(),
         veiculo_id=veiculo_id,
         cliente_id=cliente_id,
         preco_venda=Preco(valor=Decimal("50000.00")),
+        status=StatusVenda.PAGA,
         data_venda=agora,
         created_at=agora,
+        updated_at=agora,
     )
 
 

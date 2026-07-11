@@ -12,6 +12,29 @@ resource "aws_cognito_user_pool" "main" {
   # O codigo registra com Username = e-mail.
   username_attributes = ["email"]
 
+  # Perfil do cliente vive SO no Cognito (ADR 0002): nome no atributo padrao
+  # `name` (dispensa schema) + CPF em custom attribute.
+  # ATENCAO: adicionar custom attribute a um pool existente e ADITIVO (update
+  # in-place), mas ALTERAR ou REMOVER um atributo forca REPLACE do pool
+  # (perderia todos os usuarios). Este bloco nasce definitivo e nunca deve ser
+  # editado; qualquer `terraform plan` com "must be replaced" no pool aborta.
+  # mutable=false: o CPF e gravado no SignUp e nunca alteravel depois (nem
+  # pelo proprio usuario via UpdateUserAttributes) - correcao exige
+  # recadastro, com delecao manual previa por um humano (console/CLI).
+  schema {
+    name                     = "cpf"
+    attribute_data_type      = "String"
+    mutable                  = false
+    developer_only_attribute = false
+    required                 = false
+
+    # Somente tamanho: a validacao real (digitos verificadores) e o VO Cpf.
+    string_attribute_constraints {
+      min_length = 11
+      max_length = 11
+    }
+  }
+
   # Alinhada ao dominio (Senha: min_length=8). Politica mais rigida no pool
   # geraria InvalidPasswordException nao mapeada pelo gateway (HTTP 500).
   password_policy {
@@ -51,6 +74,14 @@ resource "aws_cognito_user_pool_client" "app" {
 
   # Nao revela se o usuario existe (o gateway ja trata NotAuthorizedException).
   prevent_user_existence_errors = "ENABLED"
+
+  # Custom attributes NAO sao propagados automaticamente aos app clients:
+  # sem `custom:cpf` aqui, o SignUp falharia com NotAuthorizedException
+  # ("attempted to write unauthorized attribute") em 100% dos registros.
+  # As listas explicitas SUBSTITUEM o conjunto padrao - cobrem tudo que o
+  # codigo escreve (SignUp) e le (GetUser no /v1/clientes/me).
+  write_attributes = ["email", "name", "custom:cpf"]
+  read_attributes  = ["email", "email_verified", "name", "custom:cpf"]
 }
 
 # Membros deste grupo (claim cognito:groups) podem gerenciar veiculos no vendas.

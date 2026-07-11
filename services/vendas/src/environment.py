@@ -74,6 +74,73 @@ class AuthSettings(BaseSettings):
         return self
 
 
+class CorsSettings(BaseSettings):
+    """Configuracao de CORS (prefixo de ambiente ``CORS_``).
+
+    Atributos:
+        origins: Origens permitidas, separadas por virgula. Vazio desabilita o
+            middleware (comportamento identico ao anterior a este recurso).
+        allow_credentials: Se as respostas CORS permitem credenciais (cookies).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="CORS_",
+        env_file=_ENV_FILE,
+        extra="ignore",
+    )
+
+    origins: str = Field(
+        default="",
+        description="Origens permitidas (CSV). Vazio => CORS desabilitado.",
+    )
+    allow_credentials: bool = Field(
+        default=False,
+        description="Permite credenciais (cookies) nas respostas CORS.",
+    )
+
+    @property
+    def origins_list(self) -> list[str]:
+        """Origens permitidas como lista (CSV com espacos normalizados)."""
+        return [origem.strip() for origem in self.origins.split(",") if origem.strip()]
+
+    @model_validator(mode="after")
+    def _proibir_wildcard_com_credenciais(self) -> "CorsSettings":
+        """Falha no boot ao combinar origem curinga com credenciais (inseguro)."""
+        if self.allow_credentials and "*" in self.origins_list:
+            raise ValueError(
+                "CORS_ORIGINS='*' nao pode ser combinado com CORS_ALLOW_CREDENTIALS=true."
+            )
+        return self
+
+
+class CompraSettings(BaseSettings):
+    """Configuracao do ciclo de vida da compra (prefixo ``COMPRA_``).
+
+    Atributos:
+        reserva_ttl_minutos: Validade da reserva do veiculo (venda PENDENTE).
+        expiracao_intervalo_segundos: Intervalo da varredura de reservas vencidas.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="COMPRA_",
+        env_file=_ENV_FILE,
+        extra="ignore",
+    )
+
+    reserva_ttl_minutos: int = Field(
+        default=30,
+        gt=0,
+        le=1440,
+        description="Minutos ate a reserva (venda PENDENTE) expirar.",
+    )
+    expiracao_intervalo_segundos: int = Field(
+        default=60,
+        ge=10,
+        le=3600,
+        description="Intervalo (s) entre varreduras de reservas vencidas.",
+    )
+
+
 class AppSettings(BaseSettings):
     """Configuracao geral da aplicacao/observabilidade.
 
@@ -100,6 +167,8 @@ class Settings(BaseModel):
     Atributos:
         database: Configuracao de banco de dados.
         auth: Configuracao de identidade/autenticacao.
+        cors: Configuracao de CORS.
+        compra: Configuracao do ciclo de vida da compra.
         app: Configuracao geral da aplicacao.
     """
 
@@ -107,6 +176,8 @@ class Settings(BaseModel):
 
     database: DatabaseSettings
     auth: AuthSettings
+    cors: CorsSettings
+    compra: CompraSettings
     app: AppSettings
 
 
@@ -125,5 +196,7 @@ def get_settings() -> Settings:
     return Settings(
         database=DatabaseSettings(),  # ty: ignore[missing-argument]
         auth=AuthSettings(),  # ty: ignore[missing-argument]
+        cors=CorsSettings(),
+        compra=CompraSettings(),
         app=AppSettings(),
     )

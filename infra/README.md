@@ -51,6 +51,10 @@ deploy/
 - **Envs de producao** vivem no **SSM Parameter Store** (`/tc3/prod/*`); a
   cada deploy o `deploy.sh` resolve os parametros na propria instancia e gera
   `/opt/tc3/.env` (0600). Workflows e repo nunca tocam nos valores.
+- **Logs centralizados no CloudWatch Logs** (`/tc3/prod/{auth,vendas,
+  migrations}`, retencao 14 dias): os containers usam o driver `awslogs` do
+  Docker - o loguru continua escrevendo em stdout e o daemon envia ao
+  CloudWatch com o instance profile.
 - **Identidades**: o `deploy.yml` autentica na AWS via **OIDC** (role
   `tc3-gha-deploy`, restrita a
   `repo:ketillin-tavares/tech-challenge-3:ref:refs/heads/main`); o servico de
@@ -285,6 +289,18 @@ o codigo na `main` pode mudar se novos commits entrarem. O TFC refaz o plan sobr
 o codigo NOVO no apply - pode resultar em diferenca. Solucao: nao deixe PRs merging
 entre plan e apply (required reviewers no environment `infra` ajudam).
 
+**Gate do Cognito (custom attribute `custom:cpf`)**: adicionar o atributo ao
+pool existente e ADITIVO (`update in-place`), mas o plan **NUNCA** pode mostrar
+`aws_cognito_user_pool.main must be replaced` - replace destroi o pool e todos
+os usuarios. Se aparecer, aborte e investigue antes do apply. O bloco `schema`
+do `custom:cpf` em `cognito.tf` nao deve ser editado apos criado (alterar/
+remover custom attribute forca replace).
+
+**CORS do frontend**: a variavel Terraform `cors_origins` (CSV de origens, ex.
+`https://frontend.exemplo.com`) cria o parametro SSM `/tc3/prod/cors/origins`,
+que o `deploy.sh` injeta como `CORS_ORIGINS` nos dois servicos. Vazia (default),
+o CORS fica desabilitado.
+
 ### Passo 7: primeiro deploy
 
 1. **Actions** > **deploy** > **Run workflow**:
@@ -395,6 +411,16 @@ manual no console AWS.
 
 ### Logs do deploy e da instancia
 
+- **CloudWatch Logs (centralizado, sem entrar na instancia)**: cada container
+  envia stdout/stderr para um log group proprio via driver `awslogs` do Docker
+  (o daemon usa o instance profile `tc3-ec2`; grupos criados pelo Terraform em
+  `infra/stack/logs.tf`, retencao padrao de 14 dias):
+  - AWS console > CloudWatch > Log groups > `/tc3/prod/auth`,
+    `/tc3/prod/vendas` e `/tc3/prod/migrations`.
+  - Ou via CLI: `aws logs tail /tc3/prod/vendas --follow --region us-east-2`.
+  - Modo `non-blocking`: indisponibilidade do CloudWatch nao trava as APIs
+    (logs podem ser descartados se o buffer de 4 MB encher - trade-off
+    consciente).
 - **Deploy**: no GitHub, Actions > deploy > job > step "Acompanha o resultado
   do deploy" tem stdout/stderr da EC2.
 - **Instancia em tempo real** (sem SSH):
@@ -509,6 +535,11 @@ novo vazio; o destroy vira no-op e a infra real continua de pe (e custando).
 
 ## Decisoes tecnicas (resumo)
 
+- **EC2 unica com Docker Compose** (em vez de ECS/Fargate ou EKS): decisao
+  consciente por custo (~US$ 23/mes). E um ponto unico de falha, sem
+  redundancia/auto-scaling, e rollback = re-executar o deploy com o SHA
+  anterior. Trade-off completo em
+  [docs/adrs/0001-ec2-unica-com-docker-compose.md](../docs/adrs/0001-ec2-unica-com-docker-compose.md).
 - **HCP Terraform CLI-driven**: state remoto, lock e historico de runs sem
   bucket/DynamoDB proprios; o infra.yml continua sendo o unico ponto de
   provisionamento. Organizacao/workspace via env vars `TF_CLOUD_ORGANIZATION`

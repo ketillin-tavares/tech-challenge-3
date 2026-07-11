@@ -82,3 +82,13 @@ def test_listar_disponiveis_e_publico(app: FastAPI, client: TestClient, monkeypa
     # Assert
     assert resposta.status_code == 200
     assert len(resposta.json()) == 1
+
+
+@pytest.mark.unit
+def test_listar_com_status_reservado_retorna_422(client: TestClient) -> None:
+    """RESERVADO nao tem vitrine propria: a listagem so aceita DISPONIVEL/VENDIDO."""
+    # Act
+    resposta = client.get("/v1/veiculos?status=RESERVADO")
+
+    # Assert
+    assert resposta.status_code == 422

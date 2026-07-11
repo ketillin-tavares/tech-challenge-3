@@ -1,14 +1,15 @@
 """Testes E2E do fluxo de compra orquestrando use cases contra container Postgres."""
 
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.application.dtos import CadastrarVeiculoCommand, ComprarVeiculoCommand, PaginacaoQuery
+from src.application.dtos import CadastrarVeiculoCommand, IniciarCompraCommand, PaginacaoQuery
 from src.application.use_cases.cadastrar_veiculo import CadastrarVeiculo
-from src.application.use_cases.comprar_veiculo import ComprarVeiculo
+from src.application.use_cases.iniciar_compra import IniciarCompra
 from src.application.use_cases.listar_disponiveis import ListarDisponiveis
 from src.application.use_cases.listar_vendidos import ListarVendidos
 from src.domain.exceptions import VeiculoIndisponivelError, VeiculoNaoEncontradoError
@@ -32,7 +33,7 @@ async def test_fluxo_cadastro_listagem_compra(
 
         cadastro_uc = CadastrarVeiculo(veiculo_repo)
         listagem_uc = ListarDisponiveis(query_service)
-        compra_uc = ComprarVeiculo(uow)
+        compra_uc = IniciarCompra(uow, reserva_ttl=timedelta(hours=1))
         vendidos_uc = ListarVendidos(query_service)
 
         # Act 1: Cadastra veiculo
@@ -53,25 +54,20 @@ async def test_fluxo_cadastro_listagem_compra(
         assert disponiveis[0].id == veiculo_dto.id
         assert disponiveis[0].status == StatusVeiculo.DISPONIVEL
 
-        # Act 2: Compra o veiculo
-        cmd_compra = ComprarVeiculoCommand(
+        # Act 2: Inicia compra (reserva) do veiculo
+        cmd_compra = IniciarCompraCommand(
             veiculo_id=veiculo_dto.id,
             cliente_id="cliente-teste",
         )
-        recibo = await compra_uc.executar(cmd_compra)
+        await compra_uc.executar(cmd_compra)
 
-        # Assert 2: Veiculo saiu de disponiveis
+        # Assert 2: Veiculo saiu de disponiveis (agora RESERVADO)
         disponiveis_after = await listagem_uc.executar(paginacao)
         assert len(disponiveis_after) == 0
 
-        # Assert 3: Veiculo aparece em vendidos com dados corretos
+        # Assert 3: Veiculo ainda nao aparece em vendidos (PENDENTE, nao PAGA)
         vendidos = await vendidos_uc.executar(paginacao)
-        assert len(vendidos) == 1
-        dto_vendido = vendidos[0]
-        assert dto_vendido.id == veiculo_dto.id
-        assert dto_vendido.status == StatusVeiculo.VENDIDO
-        assert dto_vendido.preco_venda == Decimal("50000.00")
-        assert dto_vendido.data_venda == recibo.data_venda
+        assert len(vendidos) == 0
 
 
 @pytest.mark.integration
@@ -79,14 +75,14 @@ async def test_fluxo_cadastro_listagem_compra(
 async def test_recompra_mesmo_veiculo_levanta_erro(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Testa que tentar comprar o mesmo veiculo 2x levanta VeiculoIndisponivelError."""
+    """Testa que tentar reservar o mesmo veiculo 2x levanta VeiculoIndisponivelError."""
     # Setup
     async with session_factory() as session:
         veiculo_repo = VeiculoRepositoryGateway(session)
         uow = UnitOfWorkGateway(session_factory)
 
         cadastro_uc = CadastrarVeiculo(veiculo_repo)
-        compra_uc = ComprarVeiculo(uow)
+        compra_uc = IniciarCompra(uow, reserva_ttl=timedelta(hours=1))
 
         # Cadastra veiculo
         cmd_cadastro = CadastrarVeiculoCommand(
@@ -99,15 +95,15 @@ async def test_recompra_mesmo_veiculo_levanta_erro(
         veiculo_dto = await cadastro_uc.executar(cmd_cadastro)
         await session.commit()
 
-        # Compra a primeira vez
-        cmd_compra1 = ComprarVeiculoCommand(
+        # Reserva a primeira vez
+        cmd_compra1 = IniciarCompraCommand(
             veiculo_id=veiculo_dto.id,
             cliente_id="cliente-1",
         )
         await compra_uc.executar(cmd_compra1)
 
-        # Tenta comprar novamente
-        cmd_compra2 = ComprarVeiculoCommand(
+        # Tenta reservar novamente
+        cmd_compra2 = IniciarCompraCommand(
             veiculo_id=veiculo_dto.id,
             cliente_id="cliente-2",
         )
@@ -121,13 +117,13 @@ async def test_recompra_mesmo_veiculo_levanta_erro(
 async def test_compra_veiculo_inexistente_levanta_erro(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Testa que comprar veiculo inexistente levanta VeiculoNaoEncontradoError."""
+    """Testa que reservar veiculo inexistente levanta VeiculoNaoEncontradoError."""
     # Setup
     uow = UnitOfWorkGateway(session_factory)
-    compra_uc = ComprarVeiculo(uow)
+    compra_uc = IniciarCompra(uow, reserva_ttl=timedelta(hours=1))
 
-    # Tenta comprar veiculo inexistente
-    cmd_compra = ComprarVeiculoCommand(
+    # Tenta reservar veiculo inexistente
+    cmd_compra = IniciarCompraCommand(
         veiculo_id=uuid4(),
         cliente_id="cliente-1",
     )
@@ -141,7 +137,7 @@ async def test_compra_veiculo_inexistente_levanta_erro(
 async def test_multiplos_veiculos_listagem_correta(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Testa que multiplos veiculos sao listados e vendidos corretamente."""
+    """Testa que multiplos veiculos sao listados corretamente."""
     # Setup
     async with session_factory() as session:
         veiculo_repo = VeiculoRepositoryGateway(session)
@@ -150,7 +146,7 @@ async def test_multiplos_veiculos_listagem_correta(
 
         cadastro_uc = CadastrarVeiculo(veiculo_repo)
         listagem_uc = ListarDisponiveis(query_service)
-        compra_uc = ComprarVeiculo(uow)
+        compra_uc = IniciarCompra(uow, reserva_ttl=timedelta(hours=1))
         vendidos_uc = ListarVendidos(query_service)
 
         # Cadastra 3 veiculos
@@ -177,16 +173,16 @@ async def test_multiplos_veiculos_listagem_correta(
         assert disponiveis[1].preco == Decimal("40000.00")
         assert disponiveis[2].preco == Decimal("50000.00")
 
-        # Compra 2
+        # Reserva 2
         await compra_uc.executar(
-            ComprarVeiculoCommand(veiculo_id=veiculos_ids[0], cliente_id="cli1")
+            IniciarCompraCommand(veiculo_id=veiculos_ids[0], cliente_id="cli1")
         )
         await compra_uc.executar(
-            ComprarVeiculoCommand(veiculo_id=veiculos_ids[1], cliente_id="cli2")
+            IniciarCompraCommand(veiculo_id=veiculos_ids[1], cliente_id="cli2")
         )
 
-        # Verifica 1 disponivel, 2 vendidos
+        # Verifica 1 disponivel, 0 vendidos (apenas reservados, nao efetivados)
         disponiveis_after = await listagem_uc.executar(paginacao)
         vendidos = await vendidos_uc.executar(paginacao)
         assert len(disponiveis_after) == 1
-        assert len(vendidos) == 2
+        assert len(vendidos) == 0

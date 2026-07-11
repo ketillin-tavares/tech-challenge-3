@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.application.dtos import ReciboVendaDTO, VeiculoDTO, VeiculoVendidoDTO
+from src.application.dtos import VeiculoDTO, VeiculoVendidoDTO
 from src.application.ports.token_verifier import TokenVerifier
 from src.domain.value_objects import ClienteAutenticado, StatusVeiculo
 
@@ -54,18 +54,6 @@ def construir_veiculo_vendido_dto() -> VeiculoVendidoDTO:
         created_at=agora,
         updated_at=agora,
         preco_venda=Decimal("120000.00"),
-        data_venda=agora,
-    )
-
-
-def construir_recibo_dto() -> ReciboVendaDTO:
-    """Cria um ReciboVendaDTO valido para os testes."""
-    agora = datetime.now(UTC)
-    return ReciboVendaDTO(
-        id=uuid4(),
-        veiculo_id=uuid4(),
-        cliente_id="cliente-1",
-        preco_venda=Decimal("85000.00"),
         data_venda=agora,
     )
 

@@ -24,6 +24,12 @@ variable "criar_oidc_github" {
   default     = true
 }
 
+variable "logs_retention_dias" {
+  description = "Retencao (dias) dos log groups dos containers no CloudWatch Logs."
+  type        = number
+  default     = 14
+}
+
 variable "rds_em_vpc" {
   description = "Coloca o RDS nas subnets privadas com o SG dedicado. Desligado apenas no root local: a emulacao de RDS do floci nao enxerga as subnets/SGs da VPC emulada (InvalidSubnet)."
   type        = bool
@@ -58,4 +64,10 @@ variable "db_username" {
   description = "Usuario master do RDS (a senha e gerada e nunca versionada)."
   type        = string
   default     = "revenda"
+}
+
+variable "cors_origins" {
+  description = "Origens permitidas ao frontend (CSV), injetadas como CORS_ORIGINS nos servicos. Vazio = CORS desabilitado (o parametro SSM nem e criado)."
+  type        = string
+  default     = ""
 }

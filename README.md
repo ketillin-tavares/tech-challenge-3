@@ -17,8 +17,11 @@ A solução atende às necessidades de negócio definidas no desafio:
 
 - **Cadastrar um veículo para venda** (marca, modelo, ano, cor, preço);
 - **Editar os dados do veículo**;
-- **Permitir a compra do veículo via internet** por pessoas cadastradas — o
-  cadastro do comprador é feito anteriormente à compra;
+- **Permitir a compra do veículo via internet** por pessoas cadastradas (com
+  nome e CPF) — o cadastro do comprador é feito anteriormente à compra;
+- **Efetivar a compra** como etapa distinta: a compra reserva o veículo
+  (venda `PENDENTE`, com prazo) e a efetivação confirma o pagamento — pronto
+  para plugar um gateway de pagamento real sem quebrar o contrato da API;
 - **Listar os veículos à venda**, ordenados por preço, do mais barato para o
   mais caro;
 - **Listar os veículos vendidos**, com a mesma ordenação.
@@ -33,7 +36,12 @@ veículos e compras).
 O desafio também exige que toda mudança na solução (implantação ou alteração)
 seja feita com **práticas de CI/CD e Pull Requests** — requisito atendido
 pelos workflows de qualidade, infraestrutura e deploy descritos na seção
-[Infraestrutura e Deploy](#infraestrutura-e-deploy).
+[Infraestrutura e Deploy](#infraestrutura-e-deploy). Esse requisito não
+depende apenas de convenção: a branch `main` é protegida por **branch
+protection**, que bloqueia push direto e só permite merge via Pull Request
+com os checks do workflow de qualidade (lint, type check, testes e quality
+gate do SonarCloud) aprovados. A configuração dos checks obrigatórios está
+documentada em [infra/README.md](infra/README.md).
 
 ## Arquitetura e Serviços
 
@@ -51,8 +59,8 @@ com FastAPI e Pydantic.
 
 | Serviço | Responsabilidade | Documentação |
 |---------|------------------|--------------|
-| **Auth** | Registro e login de compradores via AWS Cognito. Stateless — sem banco de dados próprio; os dados de clientes vivem apenas no Cognito, apartados do domínio transacional. | [services/auth/README.md](services/auth/README.md) |
-| **Vendas** | Cadastro/edição de veículos, listagens ordenadas por preço e efetivação de compras, com PostgreSQL próprio. Autorização via validação local dos tokens do Cognito. | [services/vendas/README.md](services/vendas/README.md) |
+| **Auth** | Registro (email, senha, nome e CPF), login e consulta de perfil de compradores via AWS Cognito. Stateless — sem banco de dados próprio; os dados de clientes vivem apenas no Cognito, apartados do domínio transacional ([ADR 0002](docs/adrs/0002-perfil-cliente-cognito-only.md)). | [services/auth/README.md](services/auth/README.md) |
+| **Vendas** | Cadastro/edição de veículos, listagens ordenadas por preço e ciclo de compra em duas etapas (reserva → efetivação/cancelamento), com PostgreSQL próprio. Autorização via validação local dos tokens do Cognito. | [services/vendas/README.md](services/vendas/README.md) |
 
 Os READMEs de cada serviço detalham endpoints, arquitetura interna, variáveis
 de ambiente, como rodar localmente e como testar — consulte-os diretamente;
@@ -65,6 +73,13 @@ arquivo **[docs/c4-model.dsl](docs/c4-model.dsl)**, em Structurizr DSL. Para
 renderizar o diagrama, cole o conteúdo do arquivo em
 [structurizr.com/dsl](https://structurizr.com/dsl), ou use o
 `structurizr-cli`/Structurizr Lite apontando para `docs/c4-model.dsl`.
+
+### Decisões de Arquitetura (ADRs)
+
+As decisões arquiteturais relevantes são registradas como ADRs em
+[docs/adrs/](docs/adrs/) — por exemplo, a escolha de uma EC2 única com Docker
+Compose (em vez de ECS/EKS) por custo:
+[ADR 0001](docs/adrs/0001-ec2-unica-com-docker-compose.md).
 
 ## Stack
 

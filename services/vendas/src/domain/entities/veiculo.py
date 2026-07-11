@@ -10,7 +10,9 @@ from src.domain.value_objects import Ano, Preco, StatusVeiculo
 
 
 class Veiculo(BaseModel):
-    """Item a venda com ciclo de vida DISPONIVEL -> VENDIDO.
+    """Item a venda com ciclo de vida DISPONIVEL -> RESERVADO -> VENDIDO.
+
+    O cancelamento ou a expiracao da reserva devolve o veiculo a DISPONIVEL.
 
     Atributos:
         id: Identificador unico do veiculo.
@@ -36,15 +38,39 @@ class Veiculo(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    def marcar_como_vendido(self) -> None:
-        """Transita o veiculo de DISPONIVEL para VENDIDO.
-
-        A transicao e unica e irreversivel.
+    def reservar(self) -> None:
+        """Transita o veiculo de DISPONIVEL para RESERVADO (compra iniciada).
 
         Raises:
             VeiculoIndisponivelError: Se o veiculo nao estiver DISPONIVEL.
         """
         if self.status is not StatusVeiculo.DISPONIVEL:
+            raise VeiculoIndisponivelError(self.id)
+        self.status = StatusVeiculo.RESERVADO
+        self.updated_at = datetime.now(UTC)
+
+    def liberar_reserva(self) -> None:
+        """Transita o veiculo de RESERVADO de volta para DISPONIVEL.
+
+        Ocorre no cancelamento da compra ou na expiracao da reserva.
+
+        Raises:
+            VeiculoIndisponivelError: Se o veiculo nao estiver RESERVADO.
+        """
+        if self.status is not StatusVeiculo.RESERVADO:
+            raise VeiculoIndisponivelError(self.id)
+        self.status = StatusVeiculo.DISPONIVEL
+        self.updated_at = datetime.now(UTC)
+
+    def marcar_como_vendido(self) -> None:
+        """Transita o veiculo de RESERVADO para VENDIDO (compra efetivada).
+
+        A transicao e unica e irreversivel; exige reserva previa (`reservar`).
+
+        Raises:
+            VeiculoIndisponivelError: Se o veiculo nao estiver RESERVADO.
+        """
+        if self.status is not StatusVeiculo.RESERVADO:
             raise VeiculoIndisponivelError(self.id)
         self.status = StatusVeiculo.VENDIDO
         self.updated_at = datetime.now(UTC)

@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 from src.application.dtos.auth import TokensDTO
 from src.domain.exceptions import ClienteJaExisteError, CredenciaisInvalidasError
-from src.domain.value_objects import Email, Senha
+from src.domain.value_objects import Cpf, Email, Senha
 from src.interface.gateways.cognito_identity_provider_gateway import CognitoIdentityProvider
 
 
@@ -37,25 +37,35 @@ class TestCognitoIdentityProvider:
         """Senha de teste valida."""
         return Senha(valor="senhaSegura1")
 
+    @pytest.fixture
+    def cpf(self) -> Cpf:
+        """CPF de teste valido."""
+        return Cpf(valor="12345678909")
+
     async def test_registrar_sucesso(
         self,
         provider: CognitoIdentityProvider,
         cognito_client_mock: Mock,
         email: Email,
         senha: Senha,
+        cpf: Cpf,
     ) -> None:
         """Registra cliente e retorna sub do Cognito."""
         cognito_client_mock.sign_up.return_value = {"UserSub": "sub-1"}
 
-        resultado = await provider.registrar(email, senha)
+        resultado = await provider.registrar(email, senha, "João Silva", cpf)
 
         assert resultado == "sub-1"
-        cognito_client_mock.sign_up.assert_called_once_with(
-            ClientId="testclientid",
-            Username="cliente@example.com",
-            Password="senhaSegura1",
-            UserAttributes=[{"Name": "email", "Value": "cliente@example.com"}],
-        )
+        cognito_client_mock.sign_up.assert_called_once()
+        call_kwargs = cognito_client_mock.sign_up.call_args[1]
+        assert call_kwargs["ClientId"] == "testclientid"
+        assert call_kwargs["Username"] == "cliente@example.com"
+        assert call_kwargs["Password"] == "senhaSegura1"
+        # Verifica que os atributos do usuario incluem email, nome e cpf
+        user_attrs = {attr["Name"]: attr["Value"] for attr in call_kwargs["UserAttributes"]}
+        assert user_attrs["email"] == "cliente@example.com"
+        assert user_attrs["name"] == "João Silva"
+        assert user_attrs["custom:cpf"] == cpf.valor
         cognito_client_mock.admin_confirm_sign_up.assert_called_once_with(
             UserPoolId="us-east-1_test000", Username="cliente@example.com"
         )
@@ -66,6 +76,7 @@ class TestCognitoIdentityProvider:
         cognito_client_mock: Mock,
         email: Email,
         senha: Senha,
+        cpf: Cpf,
     ) -> None:
         """Rejeita email ja existente com ClienteJaExisteError."""
         erro = ClientError(
@@ -74,10 +85,9 @@ class TestCognitoIdentityProvider:
         )
         cognito_client_mock.sign_up.side_effect = erro
 
-        with pytest.raises(ClienteJaExisteError) as exc_info:
-            await provider.registrar(email, senha)
+        with pytest.raises(ClienteJaExisteError):
+            await provider.registrar(email, senha, "João Silva", cpf)
 
-        assert exc_info.value.email == "cliente@example.com"
         cognito_client_mock.admin_confirm_sign_up.assert_not_called()
 
     async def test_registrar_outro_erro_cognito(
@@ -86,6 +96,7 @@ class TestCognitoIdentityProvider:
         cognito_client_mock: Mock,
         email: Email,
         senha: Senha,
+        cpf: Cpf,
     ) -> None:
         """Propaga outros ClientErrors do Cognito."""
         erro = ClientError(
@@ -95,7 +106,7 @@ class TestCognitoIdentityProvider:
         cognito_client_mock.sign_up.side_effect = erro
 
         with pytest.raises(ClientError):
-            await provider.registrar(email, senha)
+            await provider.registrar(email, senha, "João Silva", cpf)
 
         cognito_client_mock.admin_confirm_sign_up.assert_not_called()
 
@@ -196,3 +207,100 @@ class TestCognitoIdentityProvider:
 
         with pytest.raises(ClientError):
             await provider.autenticar(email, senha)
+
+    async def test_obter_perfil_proprio_sucesso(
+        self, provider: CognitoIdentityProvider, cognito_client_mock: Mock
+    ) -> None:
+        """Obtem perfil proprio com get_user."""
+        from src.application.dtos.auth import PerfilClienteDTO
+
+        cognito_client_mock.get_user.return_value = {
+            "Username": "cliente@example.com",
+            "UserAttributes": [
+                {"Name": "sub", "Value": "sub-123"},
+                {"Name": "email", "Value": "cliente@example.com"},
+                {"Name": "name", "Value": "João Silva"},
+                {"Name": "custom:cpf", "Value": "12345678909"},
+            ],
+        }
+
+        resultado = await provider.obter_perfil_proprio("token-abc")
+
+        assert isinstance(resultado, PerfilClienteDTO)
+        assert resultado.sub == "sub-123"
+        assert resultado.nome == "João Silva"
+        assert resultado.cpf == "12345678909"
+
+    async def test_obter_perfil_proprio_token_invalido(
+        self, provider: CognitoIdentityProvider, cognito_client_mock: Mock
+    ) -> None:
+        """Token invalido em get_user levanta TokenInvalidoError."""
+        from src.domain.exceptions import TokenInvalidoError
+
+        erro = ClientError(
+            {"Error": {"Code": "NotAuthorizedException", "Message": "Token invalid"}},
+            "GetUser",
+        )
+        cognito_client_mock.get_user.side_effect = erro
+
+        with pytest.raises(TokenInvalidoError):
+            await provider.obter_perfil_proprio("token-inválido")
+
+    async def test_obter_perfil_por_sub_sucesso(
+        self, provider: CognitoIdentityProvider, cognito_client_mock: Mock
+    ) -> None:
+        """Obtem perfil por sub com list_users."""
+
+        cognito_client_mock.list_users.return_value = {
+            "Users": [
+                {
+                    "Username": "cliente@example.com",
+                    "Attributes": [
+                        {"Name": "sub", "Value": "sub-123"},
+                        {"Name": "email", "Value": "cliente@example.com"},
+                        {"Name": "name", "Value": "João Silva"},
+                        {"Name": "custom:cpf", "Value": "12345678909"},
+                    ],
+                }
+            ]
+        }
+
+        resultado = await provider.obter_perfil_por_sub("sub-123")
+
+        assert resultado is not None
+        assert resultado.sub == "sub-123"
+        assert resultado.nome == "João Silva"
+
+    async def test_obter_perfil_por_sub_nao_encontrado(
+        self, provider: CognitoIdentityProvider, cognito_client_mock: Mock
+    ) -> None:
+        """Sub nao encontrado retorna None."""
+        cognito_client_mock.list_users.return_value = {"Users": []}
+
+        resultado = await provider.obter_perfil_por_sub("sub-inexistente")
+
+        assert resultado is None
+
+    async def test_obter_perfil_por_sub_legado_sem_cpf(
+        self, provider: CognitoIdentityProvider, cognito_client_mock: Mock
+    ) -> None:
+        """Usuario legado sem cpf/nome retorna None para esses campos."""
+
+        cognito_client_mock.list_users.return_value = {
+            "Users": [
+                {
+                    "Username": "cliente@example.com",
+                    "Attributes": [
+                        {"Name": "sub", "Value": "sub-456"},
+                        {"Name": "email", "Value": "cliente@example.com"},
+                    ],
+                }
+            ]
+        }
+
+        resultado = await provider.obter_perfil_por_sub("sub-456")
+
+        assert resultado is not None
+        assert resultado.cpf is None
+        assert resultado.nome is None
+        assert resultado.email == "cliente@example.com"

@@ -10,23 +10,30 @@ Executar localmente:
     uv run uvicorn src.main:app --port 8001 --reload
 """
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from src.domain.exceptions import (
     DomainError,
+    ReservaAtivaExistenteError,
+    ReservaExpiradaError,
     TokenInvalidoError,
+    TransicaoVendaInvalidaError,
     VeiculoIndisponivelError,
     VeiculoNaoEncontradoError,
     VeiculoVendidoNaoEditavelError,
+    VendaNaoEncontradaError,
 )
-from src.environment import Settings, get_settings
-from src.infrastructure.database import async_engine
+from src.environment import CorsSettings, Settings, get_settings
+from src.infrastructure.database import async_engine, async_session_factory
 from src.infrastructure.logging import configure_logging, get_logger
+from src.infrastructure.tasks import executar_loop_expiracao
 from src.interface.controllers import (
     compras_router,
     health_router,
@@ -40,6 +47,10 @@ _MAPA_DOMINIO: dict[type[BaseException], tuple[int, str]] = {
     VeiculoNaoEncontradoError: (404, "VEICULO_NAO_ENCONTRADO"),
     VeiculoIndisponivelError: (409, "VEICULO_INDISPONIVEL"),
     VeiculoVendidoNaoEditavelError: (409, "VEICULO_NAO_EDITAVEL"),
+    VendaNaoEncontradaError: (404, "VENDA_NAO_ENCONTRADA"),
+    TransicaoVendaInvalidaError: (409, "TRANSICAO_VENDA_INVALIDA"),
+    ReservaExpiradaError: (409, "RESERVA_EXPIRADA"),
+    ReservaAtivaExistenteError: (409, "RESERVA_ATIVA_EXISTENTE"),
     TokenInvalidoError: (401, "TOKEN_INVALIDO"),
 }
 _FALLBACK_DOMINIO: tuple[int, str] = (500, "ERRO_DOMINIO")
@@ -103,17 +114,53 @@ def _register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ValidationError, validation_error_handler)
 
 
+def _register_cors(app: FastAPI, cors: CorsSettings) -> None:
+    """Registra o middleware de CORS quando ha origens configuradas.
+
+    Sem `CORS_ORIGINS` definida o middleware nao e registrado (comportamento
+    identico ao anterior). Origens sao sempre explicitas; a combinacao curinga
+    + credenciais e rejeitada no boot pelo `CorsSettings`.
+
+    Args:
+        app: Instancia FastAPI.
+        cors: Configuracao de CORS resolvida do ambiente.
+    """
+    if not cors.origins_list:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors.origins_list,
+        allow_credentials=cors.allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Gerencia o ciclo de vida da aplicacao (libera recursos no shutdown).
+    """Gerencia o ciclo de vida da aplicacao (task de expiracao + recursos).
+
+    No startup, dispara a varredura periodica de reservas vencidas; no
+    shutdown, cancela a task de forma limpa e descarta o engine async
+    (fecha o pool de conexoes).
 
     Args:
         app: Instancia FastAPI (nao utilizada).
 
     Yields:
-        None. No shutdown, descarta o engine async (fecha o pool de conexoes).
+        None.
     """
+    settings: Settings = get_settings()
+    task_expiracao = asyncio.create_task(
+        executar_loop_expiracao(
+            async_session_factory,
+            settings.compra.expiracao_intervalo_segundos,
+        )
+    )
     yield
+    task_expiracao.cancel()
+    with suppress(asyncio.CancelledError):
+        await task_expiracao
     await async_engine.dispose()
 
 
@@ -132,6 +179,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    _register_cors(app, settings.cors)
     _register_exception_handlers(app)
     app.include_router(veiculos_router)
     app.include_router(compras_router)

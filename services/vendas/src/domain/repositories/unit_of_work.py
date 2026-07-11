@@ -11,8 +11,8 @@ class UnitOfWork(ABC):
     """Coordena uma transacao atomica sobre os repositorios.
 
     Expoe os repositorios participantes e garante commit/rollback atomico.
-    Usado pelo caso de uso ComprarVeiculo para registrar a venda e marcar o
-    veiculo como vendido na mesma transacao.
+    Usada pelos casos de uso do ciclo de compra (iniciar, efetivar, cancelar,
+    expirar) para alterar a venda e o veiculo na mesma transacao.
 
     Atributos:
         veiculos: Repositorio de veiculos vinculado a transacao.
