@@ -8,6 +8,8 @@ class RegistrarClienteCommand(BaseModel):
 
     email: str
     senha: str
+    nome: str
+    cpf: str
 
 
 class AutenticarClienteCommand(BaseModel):
@@ -18,9 +20,34 @@ class AutenticarClienteCommand(BaseModel):
 
 
 class ClienteRegistradoDTO(BaseModel):
-    """Resultado do registro: identificador opaco do cliente no IdP."""
+    """Resultado do registro. O `cpf` e o valor COMPLETO (normalizado);
+    o mascaramento na resposta HTTP e decisao da borda (presenter)."""
 
     sub: str
+    nome: str
+    cpf: str
+
+
+class ClienteRegistradoResponse(BaseModel):
+    """Resposta HTTP do registro (CPF MASCARADO por minimizacao de PII)."""
+
+    sub: str
+    nome: str
+    cpf_mascarado: str
+
+
+class PerfilClienteDTO(BaseModel):
+    """Perfil de um cliente lido do provedor de identidade.
+
+    `nome`/`cpf` podem ser None para usuarios legados criados antes da coleta
+    desses atributos. O `cpf` aqui e o valor COMPLETO (normalizado); o
+    mascaramento por endpoint e decisao da borda (presenter).
+    """
+
+    sub: str
+    email: str
+    nome: str | None = None
+    cpf: str | None = None
 
 
 class TokensDTO(BaseModel):

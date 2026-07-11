@@ -5,7 +5,7 @@ casos de uso (instanciacao do gateway concreto + injecao) acontece aqui, na
 borda; os casos de uso recebem apenas Ports.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -81,12 +81,16 @@ async def editar_veiculo(
 
 @router.get("", response_model=list[VeiculoDTO] | list[VeiculoVendidoDTO])
 async def listar_veiculos(
-    status: Annotated[StatusVeiculo, Query()],
+    status: Annotated[Literal[StatusVeiculo.DISPONIVEL, StatusVeiculo.VENDIDO], Query()],
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[VeiculoDTO] | list[VeiculoVendidoDTO]:
     """Lista veiculos por status (publico), ordenados por preco ascendente.
+
+    Somente as vitrines publicas existem como listagem: DISPONIVEL e VENDIDO.
+    RESERVADO nao e listavel (o veiculo apenas sai da vitrine de disponiveis
+    enquanto a compra esta pendente) -> 422.
 
     Args:
         status: Status dos veiculos a listar (DISPONIVEL ou VENDIDO).

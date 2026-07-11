@@ -36,9 +36,22 @@ resource "aws_ssm_parameter" "cognito_jwks_url" {
 
 # --- Banco (vendas + migrations) -------------------------------------------------
 # SecureString (KMS aws/ssm): contem a senha do RDS embutida no DSN.
+# `ssl=require` cifra o transito ao RDS (asyncpg nao forca TLS por padrao).
 resource "aws_ssm_parameter" "database_url" {
   name        = "${local.ssm_prefix}/database/url"
   description = "DSN async do PostgreSQL (env DATABASE_URL do vendas/migrations)."
   type        = "SecureString"
-  value       = "postgresql+asyncpg://${var.db_username}:${random_password.db.result}@${aws_db_instance.main.address}:5432/${var.db_name}"
+  value       = "postgresql+asyncpg://${var.db_username}:${random_password.db.result}@${aws_db_instance.main.address}:5432/${var.db_name}?ssl=require"
+}
+
+# --- CORS (auth + vendas) --------------------------------------------------------
+# Condicional: SSM nao aceita valor vazio, e sem origem configurada o
+# middleware nem e registrado nos servicos (deploy.sh tolera a ausencia).
+resource "aws_ssm_parameter" "cors_origins" {
+  count = var.cors_origins != "" ? 1 : 0
+
+  name        = "${local.ssm_prefix}/cors/origins"
+  description = "Origens permitidas ao frontend (env CORS_ORIGINS de auth e vendas)."
+  type        = "String"
+  value       = var.cors_origins
 }

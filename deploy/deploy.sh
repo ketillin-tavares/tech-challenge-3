@@ -42,6 +42,7 @@ COGNITO_CLIENT_ID=$(get_param cognito/client_id)
 COGNITO_ISSUER=$(get_param cognito/issuer)
 JWKS_URL=$(get_param cognito/jwks_url)
 DATABASE_URL=$(get_param database/url)
+CORS_ORIGINS=$(get_param cors/origins 2>/dev/null || true)
 EOF
 
 # --- 2. Login no ECR (token efemero via instance profile) ---------------------

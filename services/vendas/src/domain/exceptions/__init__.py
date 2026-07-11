@@ -7,11 +7,21 @@ from src.domain.exceptions.veiculo import (
     VeiculoNaoEncontradoError,
     VeiculoVendidoNaoEditavelError,
 )
+from src.domain.exceptions.venda import (
+    ReservaAtivaExistenteError,
+    ReservaExpiradaError,
+    TransicaoVendaInvalidaError,
+    VendaNaoEncontradaError,
+)
 
 __all__ = [
     "DomainError",
+    "ReservaAtivaExistenteError",
+    "ReservaExpiradaError",
     "TokenInvalidoError",
+    "TransicaoVendaInvalidaError",
     "VeiculoIndisponivelError",
     "VeiculoNaoEncontradoError",
     "VeiculoVendidoNaoEditavelError",
+    "VendaNaoEncontradaError",
 ]

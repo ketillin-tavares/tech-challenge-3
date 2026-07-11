@@ -101,10 +101,27 @@ data "aws_iam_policy_document" "permissions_boundary" {
   }
 
   statement {
-    sid       = "CognitoConfirmSignUp"
-    effect    = "Allow"
-    actions   = ["cognito-idp:AdminConfirmSignUp"]
+    sid    = "CognitoUserAdmin"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:AdminConfirmSignUp",
+      "cognito-idp:ListUsers",
+    ]
     resources = [aws_cognito_user_pool.main.arn]
+  }
+
+  # Envio de logs dos containers (driver awslogs) aos log groups do projeto.
+  statement {
+    sid    = "CloudWatchLogsWrite"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    resources = flatten([
+      for grupo in aws_cloudwatch_log_group.containers : [grupo.arn, "${grupo.arn}:*"]
+    ])
   }
 }
 
@@ -181,13 +198,33 @@ data "aws_iam_policy_document" "ec2" {
     resources = ["${aws_s3_bucket.deploy_artifacts.arn}/deploy/*"]
   }
 
-  # Unica chamada do servico de auth que exige IAM (SignUp/InitiateAuth sao
-  # APIs publicas do Cognito): auto-confirmacao de cadastro.
+  # Chamadas do servico de auth que exigem IAM (SignUp/InitiateAuth/GetUser
+  # sao APIs publicas do Cognito): auto-confirmacao de cadastro e resolucao
+  # de perfil por sub (ListUsers com filtro, no GET /v1/clientes/{sub}).
   statement {
-    sid       = "CognitoConfirmSignUp"
-    effect    = "Allow"
-    actions   = ["cognito-idp:AdminConfirmSignUp"]
+    sid    = "CognitoUserAdmin"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:AdminConfirmSignUp",
+      "cognito-idp:ListUsers",
+    ]
     resources = [aws_cognito_user_pool.main.arn]
+  }
+
+  # O daemon do Docker (host) envia stdout/stderr dos containers ao CloudWatch
+  # Logs via driver awslogs, usando este instance profile. Os grupos ja sao
+  # criados pelo Terraform (logs.tf) - sem CreateLogGroup aqui.
+  statement {
+    sid    = "CloudWatchLogsWrite"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    resources = flatten([
+      for grupo in aws_cloudwatch_log_group.containers : [grupo.arn, "${grupo.arn}:*"]
+    ])
   }
 }
 

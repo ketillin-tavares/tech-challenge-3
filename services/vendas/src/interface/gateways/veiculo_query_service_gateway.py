@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.dtos.veiculo import VeiculoDTO, VeiculoVendidoDTO
 from src.application.ports.veiculo_query_service import VeiculoQueryService
-from src.domain.value_objects import StatusVeiculo
+from src.domain.value_objects import StatusVeiculo, StatusVenda
 from src.infrastructure.models import VeiculoModel, VendaModel
 
 
@@ -33,11 +33,19 @@ class VeiculoQueryServiceGateway(VeiculoQueryService):
         return [self._to_veiculo_dto(model) for model in result.scalars().all()]
 
     async def listar_vendidos(self, *, limit: int = 50, offset: int = 0) -> list[VeiculoVendidoDTO]:
-        """Lista veiculos VENDIDOS com os dados da venda (JOIN unico, sem N+1)."""
+        """Lista veiculos VENDIDOS com os dados da venda (JOIN unico, sem N+1).
+
+        O JOIN considera apenas vendas PAGAS: um veiculo pode acumular vendas
+        CANCELADAS anteriores (reservas desfeitas), que nao representam a
+        venda que o tornou VENDIDO.
+        """
         stmt = (
             select(VeiculoModel, VendaModel)
             .join(VendaModel, VendaModel.veiculo_id == VeiculoModel.id)
-            .where(VeiculoModel.status == StatusVeiculo.VENDIDO.value)
+            .where(
+                VeiculoModel.status == StatusVeiculo.VENDIDO.value,
+                VendaModel.status == StatusVenda.PAGA.value,
+            )
             .order_by(VeiculoModel.preco.asc())
             .limit(limit)
             .offset(offset)
@@ -62,7 +70,14 @@ class VeiculoQueryServiceGateway(VeiculoQueryService):
 
     @staticmethod
     def _to_vendido_dto(veiculo: VeiculoModel, venda: VendaModel) -> VeiculoVendidoDTO:
-        """Monta um `VeiculoVendidoDTO` a partir do JOIN veiculo+venda."""
+        """Monta um `VeiculoVendidoDTO` a partir do JOIN veiculo+venda.
+
+        Raises:
+            ValueError: Se a venda nao tiver `data_venda` (o JOIN garante
+                vendas PAGAS; este guard preserva o contrato nao-nulo do DTO).
+        """
+        if venda.data_venda is None:
+            raise ValueError("Apenas vendas efetivadas (PAGA) compoem o veiculo vendido.")
         return VeiculoVendidoDTO(
             id=veiculo.id,
             marca=veiculo.marca,

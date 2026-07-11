@@ -8,6 +8,26 @@
       "Resource": "*"
     },
     {
+      "Sid": "CloudWatchLogGroupsDoProjeto",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:ListTagsForResource",
+        "logs:ListTagsLogGroup"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/tc3/*"
+    },
+    {
+      "Sid": "CloudWatchLogGroupsDescribe",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "arn:aws:logs:*:*:log-group:*"
+    },
+    {
       "Sid": "S3BucketsDoProjeto",
       "Effect": "Allow",
       "Action": "s3:*",

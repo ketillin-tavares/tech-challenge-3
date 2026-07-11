@@ -10,20 +10,29 @@ migrações).
 
 | Método | Rota                 | Descrição                                                                                              | Sucesso | Erro |
 |--------|----------------------|--------------------------------------------------------------------------------------------------------|---------|------|
-| `POST` | `/v1/auth/register`  | Registra um cliente no Cognito (`SignUp` + `AdminConfirmSignUp` — auto-confirmado, sem etapa de e-mail) | `201`   | `409` se o e-mail já existe |
-| `POST` | `/v1/auth/login`     | Autentica o cliente (`InitiateAuth`, fluxo `USER_PASSWORD_AUTH`)                                         | `200`   | `401` credenciais inválidas |
+| `POST` | `/v1/auth/register`  | Registra um cliente no Cognito com perfil completo — email, senha, nome e CPF (`SignUp` + `AdminConfirmSignUp` — auto-confirmado, sem etapa de e-mail) | `201`   | `409 DADOS_JA_CADASTRADOS` (genérico, anti-enumeração), `422` CPF/email inválido, `429` rate limit |
+| `POST` | `/v1/auth/login`     | Autentica o cliente (`InitiateAuth`, fluxo `USER_PASSWORD_AUTH`)                                         | `200`   | `401` credenciais inválidas, `429` rate limit |
+| `GET`  | `/v1/clientes/me`    | Perfil do próprio cliente via `GetUser` com o access token (CPF **mascarado**)                           | `200`   | `401` token inválido, `429` |
+| `GET`  | `/v1/clientes/{sub}` | Perfil de um cliente pelo `sub` via `ListUsers` — responde "quem comprou?" a partir do `cliente_id` da venda (CPF completo) | `200`   | `401`, `403` sem grupo `admin`, `404`, `429` |
 | `GET`  | `/health`            | Liveness probe (`{"status": "ok"}`)                                                                      | `200`   | —    |
+
+Endpoints públicos e de perfil são **rate-limited por IP** (slowapi; ver
+variáveis `RATELIMIT_*`). O perfil do cliente (nome, CPF) vive **apenas no
+Cognito** (atributo padrão `name` + `custom:cpf`) — decisão registrada na
+[ADR 0002](../../docs/adrs/0002-perfil-cliente-cognito-only.md).
 
 Documentação interativa: `http://localhost:8000/docs` (Swagger) e `/redoc`.
 
 ### Exemplos
 
-Registro — request `{email, senha}`, response `{sub}`:
+Registro — request `{email, senha, nome, cpf}`, response
+`{sub, nome, cpf_mascarado}` (o CPF aceita qualquer formatação e é
+normalizado para dígitos):
 
 ```bash
 curl -X POST http://localhost:8000/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email": "usuario@example.com", "senha": "senhaSegura123"}'
+  -d '{"email": "usuario@example.com", "senha": "senhaSegura123", "nome": "Usuario Exemplo", "cpf": "123.456.789-09"}'
 ```
 
 Login — request `{email, senha}`, response com os tokens emitidos pelo Cognito
@@ -47,20 +56,25 @@ monorepo):
 ```
 src/
 ├── domain/               # Regras de negócio puras (apenas pydantic)
-│   ├── value_objects/    #   Email (EmailStr) e Senha (mínimo 8 caracteres)
-│   └── exceptions/       #   DomainError, CredenciaisInvalidasError, ClienteJaExisteError
+│   ├── value_objects/    #   Email, Senha, Cpf (dígitos verificadores + normalização), ClienteAutenticado
+│   └── exceptions/       #   DomainError, CredenciaisInvalidasError, ClienteJaExisteError, ClienteNaoEncontradoError, TokenInvalidoError
 ├── application/          # Regras da aplicação
-│   ├── ports/            #   IdentityProvider (ABC — contrato do provedor de identidade)
-│   ├── use_cases/        #   RegistrarCliente, AutenticarCliente
+│   ├── ports/            #   IdentityProvider e TokenVerifier (ABCs)
+│   ├── use_cases/        #   RegistrarCliente, AutenticarCliente, ObterPerfilProprio, ObterPerfilPorSub
 │   └── dtos/             #   Schemas de entrada/saída (pydantic)
 ├── interface/            # Adaptadores de borda
-│   ├── controllers/      #   Routers FastAPI (v1/auth, health) + wiring via Depends
+│   ├── controllers/      #   Routers FastAPI (v1/auth, v1/clientes, health) + wiring via Depends + rate limit (slowapi)
 │   ├── gateways/         #   CognitoIdentityProvider (implementa o port com boto3)
-│   └── presenters/       #   Envelope de erro das respostas HTTP
-├── infrastructure/       # Detalhes: fábrica do cliente boto3 (cognito-idp) e logging (loguru)
+│   └── presenters/       #   Envelope de erro das respostas HTTP + mascaramento de CPF
+├── infrastructure/       # Detalhes: fábrica do cliente boto3, validação de JWT via JWKS (PyJWT) e logging (loguru)
 ├── environment.py        # Settings via pydantic-settings (lê env vars / .env)
 └── main.py               # Composition root: cria o FastAPI, registra routers e exception handlers
 ```
+
+**Política de PII (CPF):** o CPF nunca aparece em logs nem em mensagens de
+exceção (mensagens fixas); nas respostas, retorna **mascarado**
+(`123.***.***-09`) no eco do registro e no `/me`, e completo apenas no
+endpoint administrativo (justificado pela documentação da venda).
 
 O Cognito é um *driven adapter* atrás do port `IdentityProvider` — trocar de
 provedor de identidade afeta somente o gateway. As exceções de domínio são
@@ -79,6 +93,14 @@ fallback. Template em `env.example`:
 | `COGNITO_CLIENT_ID`     | Sim         | —              | ID do App Client do Cognito |
 | `AWS_REGION`            | Não         | `us-east-1`    | Região AWS do User Pool |
 | `AWS_ENDPOINT_URL`      | Não         | `""` (AWS real)| Endpoint customizado para emulador local |
+| `COGNITO_ISSUER`        | Não         | derivado       | Issuer esperado dos JWTs; vazio = derivado de região + pool |
+| `JWKS_URL`              | Não         | derivado       | JWKS do pool; vazio = derivado do issuer |
+| `CORS_ORIGINS`          | Não         | `""` (desligado)| Origens permitidas ao frontend (CSV); vazio não registra o middleware |
+| `CORS_ALLOW_CREDENTIALS`| Não         | `false`        | Credenciais em respostas CORS (proibido combinar com `*`) |
+| `RATELIMIT_ENABLED`     | Não         | `true`         | Liga/desliga o rate limiting (por IP, por processo) |
+| `RATELIMIT_REGISTER`    | Não         | `5/minute`     | Limite do register |
+| `RATELIMIT_LOGIN`       | Não         | `10/minute`    | Limite do login |
+| `RATELIMIT_CLIENTES`    | Não         | `30/minute`    | Limite de `/v1/clientes/*` (protege a quota do Cognito) |
 | `ENVIRONMENT`           | Não         | `development`  | `development`, `staging` ou `production` |
 | `LOG_LEVEL`             | Não         | `INFO`         | `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 

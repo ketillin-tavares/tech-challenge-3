@@ -96,11 +96,17 @@ class VeiculoVendidoDTO(VeiculoDTO):
 
         Args:
             veiculo: Entidade do veiculo vendido.
-            venda: Registro da venda associada.
+            venda: Registro da venda EFETIVADA (PAGA) associada.
 
         Returns:
             DTO com os dados do veiculo e da venda (snapshot).
+
+        Raises:
+            ValueError: Se a venda nao tiver `data_venda` (apenas vendas
+                efetivadas compoem o veiculo vendido).
         """
+        if venda.data_venda is None:
+            raise ValueError("Apenas vendas efetivadas (PAGA) compoem o veiculo vendido.")
         return cls(
             **VeiculoDTO.de_entidade(veiculo).model_dump(),
             preco_venda=venda.preco_venda.valor,

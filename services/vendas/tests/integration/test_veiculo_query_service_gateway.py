@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.entities import Veiculo, Venda
-from src.domain.value_objects import Ano, Preco, StatusVeiculo
+from src.domain.value_objects import Ano, Preco, StatusVeiculo, StatusVenda
 from src.interface.gateways.veiculo_query_service_gateway import VeiculoQueryServiceGateway
 from src.interface.gateways.veiculo_repository_gateway import VeiculoRepositoryGateway
 from src.interface.gateways.venda_repository_gateway import VendaRepositoryGateway
@@ -35,15 +35,21 @@ def construir_veiculo(
 
 
 def construir_venda(veiculo_id) -> Venda:
-    """Constroi uma entidade Venda valida."""
+    """Constroi uma entidade Venda efetivada (PAGA) valida.
+
+    O JOIN de `listar_vendidos` considera apenas vendas PAGAS, entao os
+    testes de listagem precisam de vendas efetivadas.
+    """
     agora = datetime.now(UTC)
     return Venda(
         id=uuid4(),
         veiculo_id=veiculo_id,
         cliente_id="cliente-1",
         preco_venda=Preco(valor=Decimal("60000.00")),
+        status=StatusVenda.PAGA,
         data_venda=agora,
         created_at=agora,
+        updated_at=agora,
     )
 
 

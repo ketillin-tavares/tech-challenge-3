@@ -16,13 +16,13 @@ class CredenciaisInvalidasError(AuthError):
 
 
 class ClienteJaExisteError(AuthError):
-    """Tentativa de registrar um e-mail ja existente."""
+    """Tentativa de registrar dados ja cadastrados (ex.: e-mail existente).
 
-    def __init__(self, email: str) -> None:
-        """Inicializa o erro com o e-mail em conflito.
+    A mensagem e FIXA e nao revela qual dado colidiu nem o seu valor: o
+    handler da borda devolve `str(exc)` no envelope, e PII interpolada
+    vazaria para resposta HTTP e logs.
+    """
 
-        Args:
-            email: E-mail que ja possui cadastro.
-        """
-        self.email = email
-        super().__init__(f"Ja existe um cliente com o e-mail {email}.")
+    def __init__(self) -> None:
+        """Inicializa com mensagem generica de dados ja cadastrados."""
+        super().__init__("Dados ja cadastrados.")

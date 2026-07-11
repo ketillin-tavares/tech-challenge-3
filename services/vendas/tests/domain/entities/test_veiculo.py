@@ -45,10 +45,10 @@ def test_veiculo_nasce_disponivel_por_padrao() -> None:
 
 
 @pytest.mark.unit
-def test_marcar_como_vendido_transita_de_disponivel() -> None:
-    """marcar_como_vendido muda DISPONIVEL -> VENDIDO."""
+def test_marcar_como_vendido_transita_de_reservado() -> None:
+    """marcar_como_vendido muda RESERVADO -> VENDIDO."""
     # Arrange
-    veiculo = _novo_veiculo()
+    veiculo = _novo_veiculo(status=StatusVeiculo.RESERVADO)
 
     # Act
     veiculo.marcar_como_vendido()

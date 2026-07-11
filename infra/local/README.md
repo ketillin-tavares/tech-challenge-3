@@ -259,6 +259,17 @@ para localhost** (so desperdício, nao funciona mesmo).
 
 ---
 
+## CloudWatch Logs no emulador
+
+O stack cria log groups (`/tc3/prod/{auth,vendas,migrations}`) para os logs
+dos containers de producao (driver `awslogs`; ver `infra/stack/logs.tf`). No
+root local o endpoint `logs` tambem aponta para o emulador. Se o `terraform
+apply` local falhar somente nos `aws_cloudwatch_log_group` (limitacao do
+floci), trate como os demais contornos: gate por variavel no modulo, `false`
+apenas no root local.
+
+---
+
 ## Nota final
 
 Se algum recurso falhar SOMENTE no emulador, e limitacao do floci - **nao altere

@@ -25,6 +25,17 @@ services:
     command: ["alembic", "upgrade", "head"]
     env_file:
       - .env
+    # stdout/stderr -> CloudWatch Logs via daemon do Docker (instance profile
+    # tc3-ec2; grupos criados pelo Terraform em infra/stack/logs.tf).
+    # non-blocking: indisponibilidade do CloudWatch nao trava a aplicacao.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-2
+        awslogs-group: /tc3/prod/migrations
+        tag: "{{.Name}}"
+        mode: non-blocking
+        max-buffer-size: 4m
     restart: "no"
     healthcheck:
       disable: true
@@ -40,6 +51,14 @@ services:
     image: ${ECR_REGISTRY}/tc3-vendas:${IMAGE_TAG}
     env_file:
       - .env
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-2
+        awslogs-group: /tc3/prod/vendas
+        tag: "{{.Name}}"
+        mode: non-blocking
+        max-buffer-size: 4m
     ports:
       - "8001:8001"
     depends_on:
@@ -64,6 +83,14 @@ services:
     image: ${ECR_REGISTRY}/tc3-auth:${IMAGE_TAG}
     env_file:
       - .env
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-2
+        awslogs-group: /tc3/prod/auth
+        tag: "{{.Name}}"
+        mode: non-blocking
+        max-buffer-size: 4m
     # host network: unico servico que usa o IMDS (ver cabecalho). O uvicorn ja
     # escuta em 0.0.0.0:8000 direto no host (`ports:` nao se aplica em host
     # mode); quem controla o acesso externo continua sendo o Security Group.

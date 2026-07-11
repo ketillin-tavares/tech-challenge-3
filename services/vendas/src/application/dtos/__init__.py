@@ -9,19 +9,21 @@ from src.application.dtos.veiculo import (
     VeiculoVendidoDTO,
 )
 from src.application.dtos.venda import (
-    ComprarVeiculoCommand,
-    ComprarVeiculoRequest,
+    IniciarCompraCommand,
+    IniciarCompraRequest,
     ReciboVendaDTO,
+    TransicaoCompraCommand,
 )
 
 __all__ = [
     "CadastrarVeiculoCommand",
-    "ComprarVeiculoCommand",
-    "ComprarVeiculoRequest",
     "EditarVeiculoCommand",
     "EditarVeiculoRequest",
+    "IniciarCompraCommand",
+    "IniciarCompraRequest",
     "PaginacaoQuery",
     "ReciboVendaDTO",
+    "TransicaoCompraCommand",
     "VeiculoDTO",
     "VeiculoVendidoDTO",
 ]

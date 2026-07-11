@@ -27,8 +27,13 @@ class VeiculoRepositoryGateway(VeiculoRepository):
         self._session.add(self._entity_to_model(veiculo))
 
     async def obter_por_id(self, veiculo_id: UUID) -> Veiculo | None:
-        """Busca um veiculo pelo id."""
-        model = await self._session.get(VeiculoModel, veiculo_id)
+        """Busca um veiculo pelo id (lock pessimista na linha).
+
+        Este metodo so participa de fluxos de escrita (reservar, efetivar,
+        cancelar, editar); o `FOR UPDATE` serializa transicoes concorrentes
+        sobre o mesmo veiculo. As listagens usam o query service (read-side).
+        """
+        model = await self._session.get(VeiculoModel, veiculo_id, with_for_update=True)
         return self._model_to_entity(model) if model is not None else None
 
     async def listar_por_status(
